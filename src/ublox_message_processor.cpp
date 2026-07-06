@@ -102,7 +102,8 @@ void UbloxMessageProcessor::process_data(const uint8_t *data, size_t len)
     }
     else if (msg_type == UBX_NAVPOS_ID)
     {
-        PVTSolutionPtr pvt_soln = parse_pvt(data, len);
+        uint32_t itow_ms = 0;
+        PVTSolutionPtr pvt_soln = parse_pvt(data, len, itow_ms);
         if (!pvt_soln || pvt_soln->time.time == 0)    return;
 
         // add RTK station offset if appliable
@@ -120,14 +121,42 @@ void UbloxMessageProcessor::process_data(const uint8_t *data, size_t len)
         GnssPVTSolnMsg pvt_msg = pvt2msg(pvt_soln);
         pub_pvt_.publish(pvt_msg);
 
-        sensor_msgs::NavSatFix lla_msg;
-        lla_msg.header.stamp = ros::Time(time2sec(pvt_soln->time));
-        lla_msg.latitude    = pvt_soln->lat;
-        lla_msg.longitude   = pvt_soln->lon;
-        lla_msg.altitude    = pvt_soln->hgt;
-        lla_msg.status.status = static_cast<int8_t>(pvt_soln->fix_type);
-        lla_msg.status.service = static_cast<uint16_t>(pvt_soln->carr_soln);
-        pub_lla_.publish(lla_msg);
+        // A NAV-COV message normally follows NAV-PVT for the same navigation
+        // epoch. Flush an older unmatched PVT using its accuracy estimates so
+        // receiver_lla keeps publishing when NAV-COV output is disabled.
+        if (pending_pvt_)
+            publish_lla(pending_pvt_, nullptr);
+
+        pending_pvt_ = pvt_soln;
+        pending_pvt_itow_ms_ = itow_ms;
+
+        // Also support receivers configured to output NAV-COV before NAV-PVT.
+        if (has_latest_position_covariance_ &&
+            latest_position_covariance_.itow_ms == pending_pvt_itow_ms_)
+        {
+            publish_lla(pending_pvt_, &latest_position_covariance_);
+            pending_pvt_.reset();
+            has_latest_position_covariance_ = false;
+        }
+        return;
+    }
+    else if (msg_type == UBX_NAVCOV_ID)
+    {
+        PositionCovariance position_covariance;
+        if (!parse_position_covariance(data, len, position_covariance))
+            return;
+
+        if (pending_pvt_ && pending_pvt_itow_ms_ == position_covariance.itow_ms)
+        {
+            publish_lla(pending_pvt_, &position_covariance);
+            pending_pvt_.reset();
+            has_latest_position_covariance_ = false;
+        }
+        else
+        {
+            latest_position_covariance_ = position_covariance;
+            has_latest_position_covariance_ = true;
+        }
         return;
     }
     // unsupported message reach here
@@ -226,9 +255,11 @@ TimePulseInfoPtr UbloxMessageProcessor::parse_time_pulse(const uint8_t *msg_data
     return tp_info;
 }
 
-PVTSolutionPtr UbloxMessageProcessor::parse_pvt(const uint8_t *msg_data, const uint32_t msg_len)
+PVTSolutionPtr UbloxMessageProcessor::parse_pvt(const uint8_t *msg_data,
+    const uint32_t msg_len, uint32_t &itow_ms)
 {
     PVTSolutionPtr pvt_soln;
+    itow_ms = 0;
 
     if (msg_len != MSG_HEADER_LEN+UBX_PVT_PAYLOAD_LEN+2)     // header(6) + payload(92) + checksum(2)
     {
@@ -237,12 +268,12 @@ PVTSolutionPtr UbloxMessageProcessor::parse_pvt(const uint8_t *msg_data, const u
     }
     if (curr_time.time == 0)    return pvt_soln;
     const uint8_t *p = msg_data+6;
-    uint32_t itow = *reinterpret_cast<const uint32_t*>(p);
+    itow_ms = *reinterpret_cast<const uint32_t*>(p);
     uint32_t week = 0;
     double tow = time2gpst(curr_time, &week);
-    if      (itow*1e-3 > tow+302400.0)    --week;
-    else if (itow*1e-3 < tow-302400.0)    ++week;
-    gtime_t time = gpst2time(week, itow*1e-3);
+    if      (itow_ms*1e-3 > tow+302400.0)    --week;
+    else if (itow_ms*1e-3 < tow-302400.0)    ++week;
+    gtime_t time = gpst2time(week, itow_ms*1e-3);
     if (false && (p[11]&0x04) && ((p[22]&0xF0) == 0xE0))    // skip UTC time check
     {
         // check time 
@@ -279,6 +310,73 @@ PVTSolutionPtr UbloxMessageProcessor::parse_pvt(const uint8_t *msg_data, const u
     pvt_soln->vel_acc = (*reinterpret_cast<const uint32_t*>(p+68)) * 1e-3;
     pvt_soln->time = time;
     return pvt_soln;
+}
+
+bool UbloxMessageProcessor::parse_position_covariance(const uint8_t *msg_data,
+    const uint32_t msg_len, PositionCovariance &position_covariance)
+{
+    if (msg_len != MSG_HEADER_LEN+UBX_NAVCOV_PAYLOAD_LEN+2)
+    {
+        LOG(ERROR) << "ubx nav-cov message length error. len=" << msg_len;
+        return false;
+    }
+
+    const uint8_t *p = msg_data+MSG_HEADER_LEN;
+    position_covariance.itow_ms = *reinterpret_cast<const uint32_t*>(p);
+    position_covariance.valid = static_cast<bool>(p[5]);
+    position_covariance.enu.fill(0.0);
+
+    if (!position_covariance.valid)
+        return true;
+
+    // UBX-NAV-COV contains the upper triangular part of a symmetric
+    // covariance matrix in NED. sensor_msgs/NavSatFix requires ENU.
+    float pos_cov_nn, pos_cov_ne, pos_cov_nd;
+    float pos_cov_ee, pos_cov_ed, pos_cov_dd;
+    memcpy(&pos_cov_nn, p+16, sizeof(float));
+    memcpy(&pos_cov_ne, p+20, sizeof(float));
+    memcpy(&pos_cov_nd, p+24, sizeof(float));
+    memcpy(&pos_cov_ee, p+28, sizeof(float));
+    memcpy(&pos_cov_ed, p+32, sizeof(float));
+    memcpy(&pos_cov_dd, p+36, sizeof(float));
+
+    position_covariance.enu = {
+        pos_cov_ee,  pos_cov_ne, -pos_cov_ed,
+        pos_cov_ne,  pos_cov_nn, -pos_cov_nd,
+       -pos_cov_ed, -pos_cov_nd,  pos_cov_dd
+    };
+    return true;
+}
+
+void UbloxMessageProcessor::publish_lla(const PVTSolutionPtr &pvt_soln,
+    const PositionCovariance *position_covariance)
+{
+    sensor_msgs::NavSatFix lla_msg;
+    lla_msg.header.stamp = ros::Time(time2sec(pvt_soln->time));
+    lla_msg.latitude    = pvt_soln->lat;
+    lla_msg.longitude   = pvt_soln->lon;
+    lla_msg.altitude    = pvt_soln->hgt;
+    lla_msg.status.status = static_cast<int8_t>(pvt_soln->fix_type);
+    lla_msg.status.service = static_cast<uint16_t>(pvt_soln->carr_soln);
+
+    if (position_covariance && position_covariance->valid)
+    {
+        std::copy(position_covariance->enu.begin(), position_covariance->enu.end(),
+            lla_msg.position_covariance.begin());
+        lla_msg.position_covariance_type =
+            sensor_msgs::NavSatFix::COVARIANCE_TYPE_KNOWN;
+    }
+    else
+    {
+        // NAV-PVT supplies horizontal and vertical accuracy estimates, but not
+        // their cross-correlations. Use them only as a diagonal fallback.
+        lla_msg.position_covariance[0] = pvt_soln->h_acc * pvt_soln->h_acc;
+        lla_msg.position_covariance[4] = pvt_soln->h_acc * pvt_soln->h_acc;
+        lla_msg.position_covariance[8] = pvt_soln->v_acc * pvt_soln->v_acc;
+        lla_msg.position_covariance_type =
+            sensor_msgs::NavSatFix::COVARIANCE_TYPE_DIAGONAL_KNOWN;
+    }
+    pub_lla_.publish(lla_msg);
 }
 
 std::vector<ObsPtr> UbloxMessageProcessor::parse_meas_msg(const uint8_t *msg_data, const uint32_t msg_len)
@@ -1095,6 +1193,7 @@ int UbloxMessageProcessor::build_config_msg(const std::vector<RcvConfigRecord> &
 {
     const std::map<std::string, std::pair<uint32_t, std::string>> rcv_config_item2code = 
     {
+        {"CFG-MSGOUT-UBX_NAV_COV"        , {0x20910084, "U1"}},
         {"CFG-MSGOUT-UBX_NAV_HPPOSECEF" , {0x2091002f, "U1"}},
         {"CFG-MSGOUT-UBX_NAV_HPPOSLLH"  , {0x20910034, "U1"}},
         {"CFG-MSGOUT-UBX_NAV_POSECEF"   , {0x20910025, "U1"}},

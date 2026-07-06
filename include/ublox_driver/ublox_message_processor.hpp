@@ -21,6 +21,7 @@
 #ifndef UBLOX_MESSAGE_PROCESSOR_HPP_
 #define UBLOX_MESSAGE_PROCESSOR_HPP_
 
+#include <array>
 #include <map>
 #include <ros/ros.h>
 #include <sensor_msgs/NavSatFix.h>
@@ -35,6 +36,14 @@ using namespace gnss_comm;
 
 class UbloxMessageProcessor
 {
+    private:
+        struct PositionCovariance
+        {
+            uint32_t itow_ms;
+            bool valid;
+            std::array<double, 9> enu;
+        };
+
     public:
         UbloxMessageProcessor(ros::NodeHandle &nh);
         void process_data(const uint8_t *data, size_t len);
@@ -47,7 +56,11 @@ class UbloxMessageProcessor
     private:
         void parse_ion_utc(const uint8_t *data, const size_t header_len);
         TimePulseInfoPtr parse_time_pulse(const uint8_t *msg_data, const uint32_t msg_len);
-        PVTSolutionPtr parse_pvt(const uint8_t *msg_data, const uint32_t msg_len);
+        PVTSolutionPtr parse_pvt(const uint8_t *msg_data, const uint32_t msg_len, uint32_t &itow_ms);
+        bool parse_position_covariance(const uint8_t *msg_data, const uint32_t msg_len,
+            PositionCovariance &position_covariance);
+        void publish_lla(const PVTSolutionPtr &pvt_soln,
+            const PositionCovariance *position_covariance);
 
         std::vector<ObsPtr> parse_meas_msg(const uint8_t *msg_data, const uint32_t msg_len);
         EphemBasePtr parse_subframe(const uint8_t *msg_data, const uint32_t msg_len, std::vector<double> &iono_params);
@@ -125,6 +138,10 @@ class UbloxMessageProcessor
         ros::Publisher pub_tp_info_;
         ros::Publisher pub_range_meas_, pub_ephem_, pub_glo_ephem_, pub_iono_;
         const uint32_t MSG_HEADER_LEN;
+        PVTSolutionPtr pending_pvt_;
+        uint32_t pending_pvt_itow_ms_ = 0;
+        PositionCovariance latest_position_covariance_;
+        bool has_latest_position_covariance_ = false;
 
         static constexpr uint8_t UBX_SYNC_1 = 0xB5;        // ubx message sync code 1
         static constexpr uint8_t UBX_SYNC_2 = 0x62;        // ubx message sync code 2
@@ -134,10 +151,12 @@ class UbloxMessageProcessor
         static constexpr uint16_t UBX_RXMSFRBX_ID = 0x0213;      // ubx message id: raw subframe data
         static constexpr uint16_t UBX_RXMRAWX_ID = 0x0215;       // ubx message id: multi-gnss raw meas data
         static constexpr uint16_t UBX_NAVPOS_ID = 0x0107;        // ubx message id: Navigation Position Velocity Time Solution
+        static constexpr uint16_t UBX_NAVCOV_ID = 0x0136;        // ubx message id: navigation covariance matrices
         static constexpr uint16_t UBX_TIM_TP_ID = 0x0D01;        // ubx message id:  information on the timing of the next pulse
         static constexpr uint16_t UBX_UNKNOWN_ID = 0x0000;        // ubx message id:  unknown or unsupported message
 
         static constexpr uint32_t UBX_PVT_PAYLOAD_LEN = 92;
+        static constexpr uint32_t UBX_NAVCOV_PAYLOAD_LEN = 64;
 
         static constexpr uint8_t CPSTD_VALID = 10;         // carrier-phase std threshold for cycle clip detection
         static constexpr uint8_t LLI_SLIP = 0x01;          // LLI: cycle-slip

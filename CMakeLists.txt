@@ -1,8 +1,8 @@
-cmake_minimum_required(VERSION 2.8.3)
+cmake_minimum_required(VERSION 3.0.2)
 project(ublox_driver)
 
 set(CMAKE_BUILD_TYPE "release")
-set(CMAKE_CXX_FLAGS "-std=c++11 ")
+set(CMAKE_CXX_FLAGS "-std=c++14 ")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -fPIC")
 
 find_package(catkin REQUIRED COMPONENTS
@@ -40,3 +40,8 @@ target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${GLOG_LIBRARIES})
 
 add_executable(sync_system_time ${PROJECT_SOURCE_DIR}/src/sync_system_time.cpp)
 target_link_libraries(sync_system_time ${catkin_LIBRARIES})
+
+catkin_install_python(PROGRAMS
+  scripts/rtcm_serial_bridge.py
+  DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)

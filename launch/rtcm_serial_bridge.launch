@@ -1,0 +1,13 @@
+<launch>
+    <arg name="serial_port" default="/dev/ttyACM0" />
+    <arg name="baudrate" default="115200" />
+    <arg name="bind_host" default="0.0.0.0" />
+    <arg name="bind_port" default="3503" />
+    <arg name="dashboard" default="false" />
+
+    <node name="rtcm_serial_bridge"
+          pkg="ublox_driver"
+          type="rtcm_serial_bridge.py"
+          output="screen"
+          args="--serial-port $(arg serial_port) --baudrate $(arg baudrate) --bind-host $(arg bind_host) --bind-port $(arg bind_port) --dashboard-mode $(arg dashboard)" />
+</launch>

@@ -119,6 +119,19 @@ int main(int argc, char **argv)
     ParameterManager &pm(ParameterManager::getInstance());
     pm.read_parameter(config_filepath);
 
+    // override YAML config with ROS param if provided
+    std::string ros_input_serial_port, ros_rtcm_tcp_host;
+    if (nh.getParam("input_serial_port", ros_input_serial_port) && !ros_input_serial_port.empty())
+    {
+        pm.input_serial_port = ros_input_serial_port;
+        ROS_INFO("Override input_serial_port from launch: %s", ros_input_serial_port.c_str());
+    }
+    if (nh.getParam("rtcm_tcp_host", ros_rtcm_tcp_host) && !ros_rtcm_tcp_host.empty())
+    {
+        pm.rtcm_tcp_host = ros_rtcm_tcp_host;
+        ROS_INFO("Override rtcm_tcp_host from launch: %s", ros_rtcm_tcp_host.c_str());
+    }
+
     std::shared_ptr<SerialHandler> serial;
     std::shared_ptr<SocketHandler> socket;
     std::shared_ptr<FileLoader> file_loader;
@@ -152,7 +165,7 @@ int main(int argc, char **argv)
         
         if (pm.input_rtcm)
         {
-            socket.reset(new SocketHandler("localhost", pm.rtcm_tcp_port));
+            socket.reset(new SocketHandler(pm.rtcm_tcp_host, pm.rtcm_tcp_port));
             socket->addCallback(std::bind(&SerialHandler::writeRaw, serial.get(), 
                 std::placeholders::_1, std::placeholders::_2, pm.IO_TIMEOUT_MS));
             socket->startRead();

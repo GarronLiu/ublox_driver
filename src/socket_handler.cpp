@@ -21,7 +21,8 @@
 #include "socket_handler.hpp"
 
 SocketHandler::SocketHandler(const std::string &host, uint64_t port, unsigned int buf_size) : host_(host),
-                    port_(port), buf_size_(buf_size), data_buf_(new uint8_t[buf_size_]), data_socket_(io_service_), 
+                    port_(port), buf_size_(buf_size), has_received_data_(false),
+                    data_buf_(new uint8_t[buf_size_]), data_socket_(io_service_),
                     keep_working_task_(io_service_), write_timeout_(timer_io_service_)
 {
     boost::asio::ip::tcp::resolver resolver(io_service_);
@@ -42,6 +43,7 @@ SocketHandler::SocketHandler(const std::string &host, uint64_t port, unsigned in
         std::cerr << "Cannot open socket " << host << ':' << port << '\n';
         return;
     }
+    std::cout << "Connected to RTCM TCP server " << host << ':' << port << '\n';
     boost::thread bt(boost::bind(&boost::asio::io_service::run, &io_service_));
 }
 
@@ -95,6 +97,13 @@ void SocketHandler::read_handler(const boost::system::error_code& error, std::si
 {
     if (!error)
     {
+        if (!has_received_data_)
+        {
+            has_received_data_ = true;
+            std::cout << "Receiving RTCM data from " << host_ << ':' << port_
+                      << " (" << bytes_transferred << " bytes in first read)\n";
+        }
+
         // simply invoke callback functions
         for (auto &f : callbacks_)
             f(data_buf_.get(), bytes_transferred);

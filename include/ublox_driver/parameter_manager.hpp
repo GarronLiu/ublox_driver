@@ -104,6 +104,9 @@ class ParameterManager
             {
                 input_serial_port = driver_config_root["input_serial_port"].As<std::string>();
                 serial_baud_rate = driver_config_root["serial_baud_rate"].As<long>();
+                rtcm_tcp_host = "localhost";
+                if (!driver_config_root["rtcm_tcp_host"].IsNone())
+                    rtcm_tcp_host = driver_config_root["rtcm_tcp_host"].As<std::string>();
                 rtcm_tcp_port = driver_config_root["rtcm_tcp_port"].As<uint64_t>();
             }
             else
@@ -135,6 +138,7 @@ class ParameterManager
         std::string ubx_filepath;
         std::string output_serial_port;
         std::string input_serial_port;
+        std::string rtcm_tcp_host;
         long serial_baud_rate;
         uint64_t rtcm_tcp_port;
         std::string dump_dir;

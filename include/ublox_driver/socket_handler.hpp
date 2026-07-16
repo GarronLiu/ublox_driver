@@ -53,6 +53,7 @@ class SocketHandler
         std::string host_;
         uint64_t port_;
         uint32_t buf_size_;
+        bool has_received_data_;
         std::unique_ptr<uint8_t[]> data_buf_;
         boost::asio::io_service io_service_, timer_io_service_;
         boost::asio::ip::tcp::socket data_socket_;

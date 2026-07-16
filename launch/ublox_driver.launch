@@ -1,6 +1,10 @@
 <launch>
-    <arg name="config_path" default = "$(find ublox_driver)/config/driver_config.yaml" />
+    <arg name="config_path" default="$(find ublox_driver)/config/driver_config.yaml" />
+    <arg name="input_serial_port" default="" />
+    <arg name="rtcm_tcp_host" default="" />
     <node name="ublox_driver" pkg="ublox_driver" type="ublox_driver" output="screen">
         <param name="config_file" type="string" value="$(arg config_path)" />
+        <param name="input_serial_port" type="string" value="$(arg input_serial_port)" />
+        <param name="rtcm_tcp_host" type="string" value="$(arg rtcm_tcp_host)" />
     </node>
 </launch>

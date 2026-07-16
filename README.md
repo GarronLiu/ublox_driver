@@ -72,10 +72,16 @@ cd app/consapp/str2str/gcc/
 make
 ./str2str -in ntrip://${NTRIP_SITE}:${NTRIP_PORT}/${MOUNT_POINT} -out tcpsvr://:3503
 ```
-Then set the `input_rtcm` option to `1` in *config/driver_config.yaml* and launch the ros node with:
+Then set the `input_rtcm` option to `1` in *config/driver_config.yaml*. If the RTCM TCP server is on another machine in the LAN, set `rtcm_tcp_host` to its IP address, for example `10.168.1.1`, and keep `rtcm_tcp_port` aligned with the server port. Then launch the ros node with:
 ```
 roslaunch ublox_driver ublox_driver.launch
 ```
+If your base-station receiver outputs RTCM3 directly from a serial port, this package also provides a lightweight TCP bridge:
+```
+roslaunch ublox_driver rtcm_serial_bridge.launch serial_port:=/dev/ttyACM0 baudrate:=115200 bind_port:=3503
+```
+Add `dashboard:=true` to show a lightweight terminal status view with RTCM type counts, TCP client count, reference-station ECEF coordinates from RTCM 1005/1006, and MSM observation activity by constellation.
+On the rover side, set `rtcm_tcp_host` to the LAN IP address of the computer running this bridge, and set `rtcm_tcp_port` to the same `bind_port`.
 If the field `carr_soln` in `/ublox_driver/receiver_pvt` message becomes `2`, the RTK is in fix status. If you find the location of the GNSS base station reported in the RTCM message is somehow biased, you can apply correction via the variable `rtk_correction_ecef` in the config file.
 
 ## 4. Playback Log Files
